@@ -1,0 +1,15 @@
+[Unit]
+Description=Raspi Voice Assistant POC
+After=network.target sound.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/raspi-voice
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/raspi-voice/.venv/bin/python -m src.app --device USB
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

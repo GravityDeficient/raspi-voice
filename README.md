@@ -1,6 +1,6 @@
 # raspi-voice (POC)
 
-A lightweight Raspberry Pi 5 voice assistant proof-of-concept that:
+A lightweight Raspberry Pi 5 voice assistant proof-of-concept that runs on the Pi (not your PC):
 - Listens for a wake word (grammar-based via Vosk) like "hey notes".
 - After wake, captures speech until a brief pause using WebRTC VAD.
 - Transcribes locally with Vosk and saves a Markdown note plus WAV audio.
@@ -20,29 +20,29 @@ No cloud services required. Designed for a USB microphone on Raspberry Pi 5.
 
 On the Pi, run the apt commands with sudo in your shell. PortAudio is needed for PyAudio/sounddevice.
 
-## Setup
+## Setup (on the Pi)
 
-```powershell
+```bash
 # On the Pi 5
 python3 -m venv .venv
-. .venv/bin/activate  # on Windows use .venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
 First run will automatically download the small English Vosk model to `models/` (few tens of MBs).
 
-## Run
+## Run (interactive)
 
 List devices to find your USB mic:
 
-```powershell
+```bash
 python -m src.app --list-devices
 ```
 
 Then start listening (replace the device value with an index or name substring, e.g., "USB"):
 
-```powershell
+```bash
 python -m src.app --device "USB" --once
 ```
 
@@ -61,8 +61,26 @@ Optional flags:
 
 Point `--notes` to your Obsidian vault's folder (or a subfolder) to have notes appear automatically. Example:
 
-```powershell
+```bash
 python -m src.app --notes "/home/pi/Obsidian/MyVault/Voice" --device "USB"
+```
+
+## Run on boot (systemd)
+
+1) Adjust the service if needed (username, WorkingDirectory, device flag): `scripts/raspivoice.service`.
+2) Copy the repo to `/home/pi/raspi-voice`, create venv and install deps there.
+3) Install the service:
+
+```bash
+sudo cp scripts/raspivoice.service /etc/systemd/system/raspivoice.service
+sudo systemctl daemon-reload
+sudo systemctl enable raspivoice.service
+sudo systemctl start raspivoice.service
+```
+
+Check status:
+```bash
+sudo systemctl status raspivoice.service
 ```
 
 ## Troubleshooting
