@@ -84,6 +84,59 @@ def detect_wake_word(model: Model, audio_q: queue.Queue, wake_words: list[str]) 
     return False
 
 
+def choose_input_device(preferred: str | None) -> int | None:
+    """Return a valid input device index or None if no device available.
+
+    Selection order:
+    1) If preferred is an int index and valid for input, use it.
+    2) If preferred is a substring, choose first device whose name contains it and has input channels.
+    3) Use system default input device if it has input channels.
+    4) Fallback to the first device with input channels.
+    """
+    try:
+        devices = sd.query_devices()
+    except Exception as e:
+        console.print(f"[red]Failed to query audio devices:[/] {e}")
+        return None
+
+    # 1) numeric index
+    if preferred is not None:
+        try:
+            idx = int(preferred)
+            if 0 <= idx < len(devices) and devices[idx]["max_input_channels"] > 0:
+                return idx
+        except ValueError:
+            pass
+
+    # 2) substring match
+    if preferred:
+        low = preferred.lower()
+        for idx, dev in enumerate(devices):
+            try:
+                if low in dev["name"].lower() and dev["max_input_channels"] > 0:
+                    return idx
+            except Exception:
+                continue
+
+    # 3) default input device
+    try:
+        default_in = sd.default.device[0] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
+        if isinstance(default_in, int) and 0 <= default_in < len(devices) and devices[default_in]["max_input_channels"] > 0:
+            return default_in
+    except Exception:
+        pass
+
+    # 4) first with input
+    for idx, dev in enumerate(devices):
+        try:
+            if dev["max_input_channels"] > 0:
+                return idx
+        except Exception:
+            continue
+
+    return None
+
+
 def collect_speech_until_silence(model: Model, audio_q: queue.Queue, aggressiveness: int = 2, max_silence_ms: int = 800):
     vad = webrtcvad.Vad(aggressiveness)
     rec = KaldiRecognizer(model, SAMPLE_RATE)
@@ -244,20 +297,23 @@ def main():
             console.print(f"[red]Failed to query devices:[/] {e}")
         return
 
-    selected_device = None
-    if args.device is not None:
-        # Allow index or substring match
+    selected_device = choose_input_device(args.device)
+    if selected_device is None:
+        console.print("[red]No valid input device found. Check microphone and ALSA/Pulse setup.[/]")
+        # Show devices to aid debugging
         try:
-            selected_device = int(args.device)
-        except ValueError:
-            # find first device containing substring and having input channels
-            try:
-                for idx, dev in enumerate(sd.query_devices()):
-                    if args.device.lower() in dev["name"].lower() and dev["max_input_channels"] > 0:
-                        selected_device = idx
-                        break
-            except Exception as e:
-                console.print(f"[yellow]Device search failed:[/] {e}")
+            devices = sd.query_devices()
+            for idx, dev in enumerate(devices):
+                console.print(f"{idx}: {dev['name']} (in: {dev['max_input_channels']}, out: {dev['max_output_channels']})")
+        except Exception:
+            pass
+        sys.exit(1)
+    else:
+        try:
+            dev = sd.query_devices(selected_device)
+            console.print(Panel(f"Using input device #{selected_device}: {dev['name']}", title="Audio Device"))
+        except Exception:
+            console.print(Panel(f"Using input device #{selected_device}", title="Audio Device"))
 
     console.print(Panel("Starting microphone stream", title="Audio"))
     try:
