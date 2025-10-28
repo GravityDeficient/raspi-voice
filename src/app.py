@@ -25,9 +25,18 @@ WAKE_WORDS = ["hey notes", "okay notes", "hey memo"]
 
 
 def record_audio_to_queue(audio_q: queue.Queue, stop_flag: list[int], device=None, samplerate: int = SAMPLE_RATE_DEFAULT, blocksize: int | None = None):
+    overflow_count = 0
     def callback(indata, frames, time_info, status):
+        nonlocal overflow_count
         if status:
-            console.log(f"Audio callback status: {status}")
+            try:
+                if getattr(status, "input_overflow", False):
+                    overflow_count += 1
+                    if overflow_count % 25 == 0:
+                        console.log("Audio callback: input overflow (throttled)")
+                # Avoid logging all status messages every callback to reduce overhead
+            except Exception:
+                pass
         try:
             audio_q.put_nowait(indata.copy())
         except queue.Full:
@@ -43,6 +52,7 @@ def record_audio_to_queue(audio_q: queue.Queue, stop_flag: list[int], device=Non
         blocksize=blocksize,
         callback=callback,
         device=device,  # default input device or user-provided
+        latency="high",
     ):
         while True:
             time.sleep(0.1)
@@ -140,7 +150,8 @@ def pick_working_samplerate(device_idx: int, preferred: int = SAMPLE_RATE_DEFAUL
     """Pick a sample rate supported by the device and return (rate, frame_size)."""
     # Candidates prioritized: preferred (16k), then common USB rates
     # WebRTC VAD supports 8000, 16000, 32000, 48000
-    candidates = [preferred, 48000, 32000, 16000, 8000]
+    # Prefer lower rates first to reduce CPU and overflow risk
+    candidates = [preferred, 32000, 48000, 8000]
     # De-duplicate while preserving order
     seen = set()
     ordered = []
@@ -346,7 +357,7 @@ def main():
 
     console.print(Panel("Starting microphone stream", title="Audio"))
     try:
-        with sd.InputStream(channels=CHANNELS, samplerate=sample_rate, dtype="int16", blocksize=frame_size, device=selected_device):
+        with sd.InputStream(channels=CHANNELS, samplerate=sample_rate, dtype="int16", blocksize=frame_size, device=selected_device, latency="high"):
             pass
     except Exception as e:
         console.print(f"[red]Audio device error:[/] {e}")
