@@ -7,7 +7,7 @@ Type=simple
 User=shane
 WorkingDirectory=/home/pi/raspi-voice
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/pi/raspi-voice/.venv/bin/python -m src.app --device USB --wake-words "hey raspi"
+ExecStart=/home/shane/raspi-voice/.venv/bin/python -m src.app --device USB
 Restart=always
 RestartSec=3
 
