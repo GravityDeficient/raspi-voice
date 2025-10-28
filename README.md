@@ -74,20 +74,20 @@ python -m src.app --notes "/home/pi/Obsidian/MyVault/Voice" --device "USB"
 
 ## Run on boot (systemd)
 
-1) Adjust the service if needed (username, WorkingDirectory, device flag): `scripts/raspivoice.service`.
+1) Adjust the service if needed (username, WorkingDirectory, device flag): `scripts/raspi-voice.service`.
 2) Copy the repo to `/home/pi/raspi-voice`, create venv and install deps there.
 3) Install the service:
 
 ```bash
-sudo cp scripts/raspivoice.service /etc/systemd/system/raspivoice.service
+sudo cp scripts/raspi-voice.service /etc/systemd/system/raspi-voice.service
 sudo systemctl daemon-reload
-sudo systemctl enable raspivoice.service
-sudo systemctl start raspivoice.service
+sudo systemctl enable raspi-voice.service
+sudo systemctl start raspi-voice.service
 ```
 
 Check status:
 ```bash
-sudo systemctl status raspivoice.service
+sudo systemctl status raspi-voice.service
 ```
 
 ## Troubleshooting
