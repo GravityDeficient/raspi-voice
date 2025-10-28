@@ -62,19 +62,20 @@ def bytes_from_frames(frames):
         yield frame.tobytes()
 
 
-def detect_wake_word(model: Model, audio_q: queue.Queue) -> bool:
+def detect_wake_word(model: Model, audio_q: queue.Queue, wake_words: list[str]) -> bool:
     # Use grammar-based recognition constrained to wake words for faster, low-resource detection
-    grammar = json.dumps(WAKE_WORDS)
+    wake_words_lc = [w.strip().lower() for w in wake_words if w.strip()]
+    grammar = json.dumps(wake_words_lc)
     rec = KaldiRecognizer(model, SAMPLE_RATE, grammar)
     rec.SetWords(False)
 
-    console.print(Panel("Listening for wake word: " + ", ".join(f'"{w}"' for w in WAKE_WORDS), title="Wake Word"))
+    console.print(Panel("Listening for wake word: " + ", ".join(f'"{w}"' for w in wake_words), title="Wake Word"))
 
     for b in bytes_from_frames(frames_from_queue(audio_q)):
         if rec.AcceptWaveform(b):
             res = json.loads(rec.Result())
             text = (res.get("text") or "").strip()
-            if text and any(text == w for w in WAKE_WORDS):
+            if text and any(text == w for w in wake_words_lc):
                 console.print("Wake word detected: [bold green]" + text + "[/]")
                 return True
         else:
@@ -220,6 +221,7 @@ def main():
     parser.add_argument("--once", action="store_true", help="Exit after a single note")
     parser.add_argument("--device", default=None, help="Input device index or substring to select USB mic")
     parser.add_argument("--list-devices", action="store_true", help="List audio devices and exit")
+    parser.add_argument("--wake-words", default=None, help='Comma-separated wake words, e.g., "hey notes, okay notes"')
     args = parser.parse_args()
 
     models_dir = os.path.abspath(args.models)
@@ -271,10 +273,19 @@ def main():
     t = threading.Thread(target=record_audio_to_queue, args=(audio_q, stop_flag, selected_device), daemon=True)
     t.start()
 
-    console.print(Panel("Ready. Say: 'hey notes'", title="Status", subtitle="Ctrl+C to stop"))
+    # Derive wake words list
+    if args.wake_words:
+        wake_words = [w.strip() for w in args.wake_words.split(",") if w.strip()]
+        if not wake_words:
+            wake_words = WAKE_WORDS
+    else:
+        wake_words = WAKE_WORDS
+
+    ww_display = ", ".join(f'"{w}"' for w in wake_words)
+    console.print(Panel(f"Ready. Say one of: {ww_display}", title="Status", subtitle="Ctrl+C to stop"))
     try:
         while True:
-            if not detect_wake_word(model, audio_q):
+            if not detect_wake_word(model, audio_q, wake_words):
                 continue
             transcript, wav_bytes = collect_speech_until_silence(model, audio_q, aggressiveness=args.vad, max_silence_ms=args.silence)
             if not transcript:

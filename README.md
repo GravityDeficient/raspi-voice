@@ -46,6 +46,13 @@ Then start listening (replace the device value with an index or name substring, 
 python -m src.app --device "USB" --once
 ```
 
+Change the wake word(s) on the fly with a comma-separated list:
+
+```bash
+python -m src.app --device "USB" --once --wake-words "hey notebook, okay notebook"
+# Multiple accepted phrases are allowed (case-insensitive)
+```
+
 Say: "hey notes". Speak your note; pause for ~1 second to finish. The app saves:
 - Markdown: `notes/note_YYYY-MM-DD_HH-MM-SS.md`
 - Audio: `notes/audio/note_YYYY-MM-DD_HH-MM-SS.wav`
