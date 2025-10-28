@@ -18,14 +18,13 @@ from vosk import KaldiRecognizer, Model
 console = Console()
 
 
-SAMPLE_RATE = 16000  # 16kHz recommended for Vosk
+SAMPLE_RATE_DEFAULT = 16000  # Preferred
 CHANNELS = 1
 FRAME_DURATION_MS = 30  # valid for VAD: 10, 20, 30 ms
-FRAME_SIZE = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000)
 WAKE_WORDS = ["hey notes", "okay notes", "hey memo"]
 
 
-def record_audio_to_queue(audio_q: queue.Queue, stop_flag: list[int], device=None):
+def record_audio_to_queue(audio_q: queue.Queue, stop_flag: list[int], device=None, samplerate: int = SAMPLE_RATE_DEFAULT, blocksize: int | None = None):
     def callback(indata, frames, time_info, status):
         if status:
             console.log(f"Audio callback status: {status}")
@@ -39,9 +38,9 @@ def record_audio_to_queue(audio_q: queue.Queue, stop_flag: list[int], device=Non
 
     with sd.InputStream(
         channels=CHANNELS,
-        samplerate=SAMPLE_RATE,
+        samplerate=samplerate,
         dtype="int16",
-        blocksize=FRAME_SIZE,
+        blocksize=blocksize,
         callback=callback,
         device=device,  # default input device or user-provided
     ):
@@ -62,11 +61,11 @@ def bytes_from_frames(frames):
         yield frame.tobytes()
 
 
-def detect_wake_word(model: Model, audio_q: queue.Queue, wake_words: list[str]) -> bool:
+def detect_wake_word(model: Model, audio_q: queue.Queue, wake_words: list[str], sample_rate: int) -> bool:
     # Use grammar-based recognition constrained to wake words for faster, low-resource detection
     wake_words_lc = [w.strip().lower() for w in wake_words if w.strip()]
     grammar = json.dumps(wake_words_lc)
-    rec = KaldiRecognizer(model, SAMPLE_RATE, grammar)
+    rec = KaldiRecognizer(model, sample_rate, grammar)
     rec.SetWords(False)
 
     console.print(Panel("Listening for wake word: " + ", ".join(f'"{w}"' for w in wake_words), title="Wake Word"))
@@ -137,9 +136,31 @@ def choose_input_device(preferred: str | None) -> int | None:
     return None
 
 
-def collect_speech_until_silence(model: Model, audio_q: queue.Queue, aggressiveness: int = 2, max_silence_ms: int = 800):
+def pick_working_samplerate(device_idx: int, preferred: int = SAMPLE_RATE_DEFAULT) -> tuple[int, int] | None:
+    """Pick a sample rate supported by the device and return (rate, frame_size)."""
+    # Candidates prioritized: preferred (16k), then common USB rates
+    # WebRTC VAD supports 8000, 16000, 32000, 48000
+    candidates = [preferred, 48000, 32000, 16000, 8000]
+    # De-duplicate while preserving order
+    seen = set()
+    ordered = []
+    for r in candidates:
+        if r not in seen:
+            ordered.append(r)
+            seen.add(r)
+    for rate in ordered:
+        try:
+            sd.check_input_settings(device=device_idx, channels=CHANNELS, dtype="int16", samplerate=rate)
+            frame_size = int(rate * FRAME_DURATION_MS / 1000)
+            return rate, frame_size
+        except Exception:
+            continue
+    return None
+
+
+def collect_speech_until_silence(model: Model, audio_q: queue.Queue, aggressiveness: int = 2, max_silence_ms: int = 800, sample_rate: int = SAMPLE_RATE_DEFAULT):
     vad = webrtcvad.Vad(aggressiveness)
-    rec = KaldiRecognizer(model, SAMPLE_RATE)
+    rec = KaldiRecognizer(model, sample_rate)
     rec.SetWords(True)
 
     console.print(Panel("Speak your note. Pause to end.", title="Recording"))
@@ -155,7 +176,7 @@ def collect_speech_until_silence(model: Model, audio_q: queue.Queue, aggressiven
         wav_bytes.extend(frame_bytes)
 
         # VAD expects 16-bit mono 8/16/32/48kHz, frame length 10/20/30ms
-        is_speech = vad.is_speech(frame_bytes, SAMPLE_RATE)
+        is_speech = vad.is_speech(frame_bytes, sample_rate)
         if is_speech:
             silence_counter = 0
         else:
@@ -192,14 +213,14 @@ def save_markdown_note(text: str, notes_dir: str, vault_subdir: str | None = Non
     return path
 
 
-def save_wav(data_bytes: bytes, audio_dir: str) -> str:
+def save_wav(data_bytes: bytes, audio_dir: str, sample_rate: int) -> str:
     os.makedirs(audio_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     wav_path = os.path.join(audio_dir, f"note_{timestamp}.wav")
     with wave.open(wav_path, "wb") as wf:
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(2)  # int16
-        wf.setframerate(SAMPLE_RATE)
+        wf.setframerate(sample_rate)
         wf.writeframes(data_bytes)
     return wav_path
 
@@ -315,9 +336,17 @@ def main():
         except Exception:
             console.print(Panel(f"Using input device #{selected_device}", title="Audio Device"))
 
+    # Determine a working sample rate and frame size for this device
+    picked = pick_working_samplerate(selected_device, SAMPLE_RATE_DEFAULT)
+    if not picked:
+        console.print("[red]Could not find a supported sample rate for the selected device.[/]")
+        sys.exit(1)
+    sample_rate, frame_size = picked
+    console.print(Panel(f"Sample rate: {sample_rate} Hz, Frame: {FRAME_DURATION_MS} ms ({frame_size} samples)", title="Audio Config"))
+
     console.print(Panel("Starting microphone stream", title="Audio"))
     try:
-        with sd.InputStream(channels=CHANNELS, samplerate=SAMPLE_RATE, dtype="int16", blocksize=FRAME_SIZE, device=selected_device):
+        with sd.InputStream(channels=CHANNELS, samplerate=sample_rate, dtype="int16", blocksize=frame_size, device=selected_device):
             pass
     except Exception as e:
         console.print(f"[red]Audio device error:[/] {e}")
@@ -326,7 +355,7 @@ def main():
     # Start background recording thread
     import threading
 
-    t = threading.Thread(target=record_audio_to_queue, args=(audio_q, stop_flag, selected_device), daemon=True)
+    t = threading.Thread(target=record_audio_to_queue, args=(audio_q, stop_flag, selected_device, sample_rate, frame_size), daemon=True)
     t.start()
 
     # Derive wake words list
@@ -341,14 +370,14 @@ def main():
     console.print(Panel(f"Ready. Say one of: {ww_display}", title="Status", subtitle="Ctrl+C to stop"))
     try:
         while True:
-            if not detect_wake_word(model, audio_q, wake_words):
+            if not detect_wake_word(model, audio_q, wake_words, sample_rate):
                 continue
-            transcript, wav_bytes = collect_speech_until_silence(model, audio_q, aggressiveness=args.vad, max_silence_ms=args.silence)
+            transcript, wav_bytes = collect_speech_until_silence(model, audio_q, aggressiveness=args.vad, max_silence_ms=args.silence, sample_rate=sample_rate)
             if not transcript:
                 console.print("[yellow]No speech captured.[/]")
                 continue
             md_path = save_markdown_note(transcript, notes_dir)
-            wav_path = save_wav(wav_bytes, audio_dir)
+            wav_path = save_wav(wav_bytes, audio_dir, sample_rate)
             console.print(Panel(f"Saved note to:\n{md_path}\nAudio:\n{wav_path}", title="Saved", border_style="green"))
             if args.once:
                 break
